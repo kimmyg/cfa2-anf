@@ -113,14 +113,13 @@
   (eval (P (let ([f (λ (x) x)])
 	     (f 42)))))
 
-
 ;; abstract evaluation
 
 (define (ρ-update ρ x v)
   (hash-set ρ (var-x x) v))
 
 (define (σ-update σ x v)
-  (if (href? x)
+  (if (hvar? x)
     (hash-update σ (var-x x) (λ (vs) (set-union vs v)) (set))
     σ))
 
@@ -183,6 +182,12 @@
 	(values seen work)
 	(values seen (set-add work ς0×ς1)))))
 
+  (define (propagate* seen work ς0 ς1s)
+    (for/fold ([seen seen]
+	       [work work])
+	([ς1 (in-list ς1s)])
+      (propagate seen work ς0 ς1)))
+
   (define (update seen work ς0 ς1 ς2 ς3)
     (match-let ([(ς-call ς1 ρ1 (cons (αΓ x e) κ) f1 e1) ς1]
 		[(ς-entr σ2 f2 v2) ς2]
@@ -192,6 +197,22 @@
 	(let ([σ (σ-update σ x v3)]
 	      [ρ (ρ-update ρ x v3)])
 	  (propagate seen work ς0 (ς-eval σ ρ κ e))))))
+
+  (define (call seen work callers ς0×ς1 ς2s)
+    (for/fold ([seen seen]
+	       [work work]
+	       [callers callers])
+	([ς2 (in-list ς2s)])
+      (let-values ([(seen work) (propagate seen work ς2 ς2)]
+		   [(callers) (hash-update callers ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
+	(values seen work callers))))
+
+  (define (return seen work ς0×ς1s f)
+    (for/fold ([seen seen]
+	       [work work])
+	([ς0×ς1 (in-set ς0×ς1s)])
+      (match-let ([(cons ς0 ς1) ς0×ς1])
+	(f seen work ς0 ς1))))
   
   (let ([init (inject p)])
     (let loop ([seen (set)]
@@ -202,56 +223,30 @@
 	       [finals (set)])
       (match work
 	[(list)
-	 (values summaries finals)]
+	 (values callers tcallers summaries finals)]
 	[(cons (and ς0×ς1 (cons ς0 ς1)) work)
 	 (let ([seen (set-add seen ς0×ς1)])
 	   (cond
 	     [(ς-call? ς1)
-	      (let-values ([(seen work callers)
-			    (for/fold ([seen seen]
-				       [work work]
-				       [callers callers])
-				([ς2 (in-list (succs ς1))])
-			      (let-values ([(seen work) (propagate seen work ς2 ς2)]
-					   [(callers) (hash-update callers ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
-				(values seen work callers)))])
+	      (let-values ([(seen work callers) (call seen work callers ς0×ς1 (succs ς1))])
 		(loop seen work callers tcallers summaries finals))]
 	     [(ς-tcall? ς1)
-	      (let-values ([(seen work tcallers)
-			    (for/fold ([seen seen]
-				       [work work]
-				       [tcallers tcallers])
-				([ς2 (in-list (succs ς1))])
-			      (let-values ([(seen work) (propagate seen work ς2 ς2)]
-					   [(tcallers) (hash-update tcallers ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
-				(values seen work tcallers)))])
+	      (let-values ([(seen work tcallers) (call seen work tcallers ς0×ς1 (succs ς1))])
 		(loop seen work callers tcallers summaries finals))]
 	     [(ς-entr? ς1)
-	      (let-values ([(seen work)
-			    (for/fold ([seen seen]
-				       [work work])
-				([ς2 (in-list (succs ς1))])
-			      (propagate seen work ς0 ς2))])
+	      (let-values ([(seen work) (propagate* seen work ς0 (succs ς1))])
 		(loop seen work callers tcallers summaries finals))]
 	     [(ς-exit? ς1)
 	      (let ([summaries (hash-update summaries ς0 (λ (ss) (set-add ss ς1)) (set))])
 		(if (equal? init ς0)
 		  (loop seen work callers tcallers summaries (set-add finals ς1))
-		  (let*-values ([(seen work)
-				 (for/fold ([seen seen]
-					    [work work])
-				     ([ς2×ς3 (in-set (hash-ref callers ς0 (set)))])
-				   (match-let ([(cons ς2 ς3) ς2×ς3])
-				     (update seen work ς2 ς3 ς0 ς1)))]
-				[(seen work)
-				 (for/fold ([seen seen]
-					    [work work])
-				     ([ς2×ς3 (in-set (hash-ref tcallers ς0 (set)))])
-				   (match-let ([(cons ς2 ς3) ς2×ς3])
-				     (propagate seen work ς2 ς1)))])
+		  (let*-values ([(seen work) (return seen work (hash-ref callers ς0 (set))
+						     (λ (seen work ς2 ς3) (update seen work ς2 ς3 ς0 ς1)))]
+				[(seen work) (return seen work (hash-ref tcallers ς0 (set))
+						     (λ (seen work ς2 ς3) (propagate seen work ς2 ς1)))])
 		    (loop seen work callers tcallers summaries finals))))]
 	     [else
-	      (raise ς1)]))]))))
+	      (error 'analyze "unhandled state: ~a" ς1)]))]))))
 
 (module+ main
   (analyze (P 42))
@@ -259,4 +254,3 @@
 		(let ([z (f 24)])
 		  z))))
   (analyze (P ((λ (x) (x x)) (λ (y) (y y))))))
-
