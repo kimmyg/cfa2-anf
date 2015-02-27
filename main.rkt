@@ -126,7 +126,7 @@
 (struct αΓ (x e))
 
 (struct ς-call (σ ρ κ f e) #:transparent)
-(struct ς-tcall (σ ρ f e) #:transparent)
+(struct ς-tail (σ ρ f e) #:transparent)
 (struct ς-entr (σ f v) #:transparent)
 (struct ς-exit (σ v) #:transparent)
 
@@ -145,7 +145,7 @@
     (match e
       [(app f e)
        (if (empty? κ)
-	 (ς-tcall σ ρ f e)
+	 (ς-tail σ ρ f e)
 	 (ς-call σ ρ κ f e))]
       [(lte x e0 e1)
        (ς-eval σ ρ (cons (αΓ x e1) κ) e0)])))
@@ -164,7 +164,7 @@
 (define succs
   (match-lambda
     [(or (ς-call σ ρ _ f e)
-	 (ς-tcall σ ρ f e))
+	 (ς-tail σ ρ f e))
      (let ([v (αA e ρ σ)])
        (for/list ([f (in-set (αA f ρ σ))])
 	 (ς-entr σ f v)))]
@@ -195,15 +195,20 @@
 	      [ρ (ρ-update ρ x v3)])
 	  (propagate seen work ς0 (ς-eval σ ρ κ e))))))
 
-  (define (call seen work callers ς0×ς1 ς2s)
+  (define (call seen work calls summaries ς0×ς1 ς2s f)
     (for/fold ([work work]
-	       [callers callers])
+	       [calls calls])
 	([ς2 (in-list ς2s)])
-      (let ([work (propagate seen work ς2 ς2)]
-	    [callers (hash-update callers ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
-	(values work callers))))
+      (if (hash-has-key? summaries ς2)
+	(values (for/fold ([work work])
+		    ([ς3 (in-set (hash-ref summaries ς2))])
+		  (f work ς2 ς3))
+		calls)
+	(let ([work (propagate seen work ς2 ς2)]
+	      [calls (hash-update calls ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
+	  (values work calls)))))
 
-  (define (return seen work ς0×ς1s f)
+  (define (retr seen work ς0×ς1s f)
     (for/fold ([work work])
 	([ς0×ς1 (in-set ς0×ς1s)])
       (match-let ([(cons ς0 ς1) ς0×ς1])
@@ -212,34 +217,36 @@
   (let ([init (inject p)])
     (let loop ([seen (set)]
 	       [work (list (cons init init))]
-	       [callers (hash)]
-	       [tcallers (hash)]
+	       [calls (hash)]
+	       [tails (hash)]
 	       [summaries (hash)]
 	       [finals (set)])
       (match work
 	[(list)
-	 (values callers tcallers summaries finals)]
+	 (values calls tails summaries finals)]
 	[(cons (and ς0×ς1 (cons ς0 ς1)) work)
 	 (let ([seen (set-add seen ς0×ς1)])
 	   (cond
 	     [(ς-call? ς1)
-	      (let-values ([(work callers) (call seen work callers ς0×ς1 (succs ς1))])
-		(loop seen work callers tcallers summaries finals))]
-	     [(ς-tcall? ς1)
-	      (let-values ([(work tcallers) (call seen work tcallers ς0×ς1 (succs ς1))])
-		(loop seen work callers tcallers summaries finals))]
+	      (let-values ([(work calls) (call seen work calls summaries ς0×ς1 (succs ς1)
+					       (λ (work ς2 ς3) (update seen work ς0 ς1 ς2 ς3)))])
+		(loop seen work calls tails summaries finals))]
+	     [(ς-tail? ς1)
+	      (let-values ([(work tails) (call seen work tails summaries ς0×ς1 (succs ς1)
+					       (λ (work ς2 ς3) (propagate seen work ς0 ς3)))])
+		(loop seen work calls tails summaries finals))]
 	     [(ς-entr? ς1)
 	      (let ([work (propagate* seen work ς0 (succs ς1))])
-		(loop seen work callers tcallers summaries finals))]
+		(loop seen work calls tails summaries finals))]
 	     [(ς-exit? ς1)
 	      (let ([summaries (hash-update summaries ς0 (λ (ss) (set-add ss ς1)) (set))])
 		(if (equal? init ς0)
-		  (loop seen work callers tcallers summaries (set-add finals ς1))
-		  (let* ([work (return seen work (hash-ref callers ς0 (set))
+		  (loop seen work calls tails summaries (set-add finals ς1))
+		  (let* ([work (retr seen work (hash-ref calls ς0 (set))
 				       (λ (seen work ς2 ς3) (update seen work ς2 ς3 ς0 ς1)))]
-			 [work (return seen work (hash-ref tcallers ς0 (set))
+			 [work (retr seen work (hash-ref tails ς0 (set))
 				       (λ (seen work ς2 ς3) (propagate seen work ς2 ς1)))])
-		    (loop seen work callers tcallers summaries finals))))]
+		    (loop seen work calls tails summaries finals))))]
 	     [else
 	      (error 'analyze "unhandled state: ~a" ς1)]))]))))
 
