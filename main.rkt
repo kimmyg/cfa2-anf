@@ -199,14 +199,10 @@
     (for/fold ([work work]
 	       [calls calls])
 	([ς2 (in-list ς2s)])
-      (if (hash-has-key? summaries ς2)
-	(values (for/fold ([work work])
-		    ([ς3 (in-set (hash-ref summaries ς2))])
-		  (f work ς2 ς3))
-		calls)
-	(let ([work (propagate seen work ς2 ς2)]
-	      [calls (hash-update calls ς2 (λ (cs) (set-add cs ς0×ς1)) (set))])
-	  (values work calls)))))
+      (values (for/fold ([work (propagate seen work ς2 ς2)])
+                  ([ς3 (in-set (hash-ref summaries ς2))])
+                (f work ς2 ς3))
+              (hash-update calls ς2 (λ (cs) (set-add cs ς0×ς1)) (set)))))
 
   (define (retr seen work ς0×ς1s f)
     (for/fold ([work work])
