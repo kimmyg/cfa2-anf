@@ -179,8 +179,7 @@
   (define (propagate seen work ς0 ς1)
     (let ([ς0×ς1 (cons ς0 ς1)])
       (if (set-member? seen ς0×ς1)
-	work
-	(set-add work ς0×ς1))))
+	work (cons ς0×ς1 work))))
 
   (define (propagate* seen work ς0 ς1s)
     (foldl (λ (ς1 work) (propagate seen work ς0 ς1)) work ς1s))
@@ -200,7 +199,7 @@
 	       [calls calls])
 	([ς2 (in-list ς2s)])
       (values (for/fold ([work (propagate seen work ς2 ς2)])
-                  ([ς3 (in-set (hash-ref summaries ς2))])
+                  ([ς3 (in-set (hash-ref summaries ς2 (set)))])
                 (f work ς2 ς3))
               (hash-update calls ς2 (λ (cs) (set-add cs ς0×ς1)) (set)))))
 
@@ -210,9 +209,9 @@
       (match-let ([(cons ς0 ς1) ς0×ς1])
 	(f seen work ς0 ς1))))
   
-  (let ([init (inject p)])
+  (let ([ς-init (inject p)])
     (let loop ([seen (set)]
-	       [work (list (cons init init))]
+	       [work (list (cons ς-init ς-init))]
 	       [calls (hash)]
 	       [tails (hash)]
 	       [summaries (hash)]
@@ -221,6 +220,7 @@
 	[(list)
 	 (values calls tails summaries finals)]
 	[(cons (and ς0×ς1 (cons ς0 ς1)) work)
+         (displayln "here")
 	 (let ([seen (set-add seen ς0×ς1)])
 	   (cond
 	     [(ς-call? ς1)
@@ -236,7 +236,7 @@
 		(loop seen work calls tails summaries finals))]
 	     [(ς-exit? ς1)
 	      (let ([summaries (hash-update summaries ς0 (λ (ss) (set-add ss ς1)) (set))])
-		(if (equal? init ς0)
+		(if (equal? ς-init ς0)
 		  (loop seen work calls tails summaries (set-add finals ς1))
 		  (let* ([work (retr seen work (hash-ref calls ς0 (set))
 				       (λ (seen work ς2 ς3) (update seen work ς2 ς3 ς0 ς1)))]
