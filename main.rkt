@@ -220,7 +220,6 @@
 	[(list)
 	 (values calls tails summaries finals)]
 	[(cons (and ς0×ς1 (cons ς0 ς1)) work)
-         (displayln "here")
 	 (let ([seen (set-add seen ς0×ς1)])
 	   (cond
 	     [(ς-call? ς1)
